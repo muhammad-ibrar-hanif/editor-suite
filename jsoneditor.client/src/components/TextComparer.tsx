@@ -1,5 +1,6 @@
 ﻿// src/components/TextComparer.tsx
 import React, { useState, useEffect, useRef } from 'react';
+import Editor from '@monaco-editor/react';
 import './TextComparer.css';
 
 interface DiffLine {
@@ -8,19 +9,123 @@ interface DiffLine {
     leftLineNumber: number;
     rightLineNumber: number;
     hasDifference: boolean;
+    wordDiffs?: WordDiff[];
+}
+
+interface WordDiff {
+    value: string;
+    added?: boolean;
+    removed?: boolean;
 }
 
 const TextComparer = () => {
-    const [leftText, setLeftText] = useState('Hello world!\nThis is the left side\nSome same text\nDifferent line here');
-    const [rightText, setRightText] = useState('Hello world!\nThis is the right side\nSome same text\nDifferent content here');
+    const [leftText, setLeftText] = useState('// JSON Example\n{\n  "name": "John",\n  "age": 30,\n  "city": "New York"\n}');
+    const [rightText, setRightText] = useState('// JSON Example\n{\n  "name": "Jane",\n  "age": 25,\n  "city": "London"\n}');
     const [diffLines, setDiffLines] = useState<DiffLine[]>([]);
-    const leftContentRef = useRef<HTMLDivElement>(null);
-    const rightContentRef = useRef<HTMLDivElement>(null);
-    const actionsPanelRef = useRef<HTMLDivElement>(null);
-    const leftLineNumbersRef = useRef<HTMLDivElement>(null);
-    const rightLineNumbersRef = useRef<HTMLDivElement>(null);
+    const [language, setLanguage] = useState<string>('plaintext');
+    const [editorTheme, setEditorTheme] = useState<'vs' | 'vs-dark'>('vs');
 
-    // Perform line-by-line comparison
+    const leftEditorRef = useRef<any>(null);
+    const rightEditorRef = useRef<any>(null);
+    const actionsPanelRef = useRef<HTMLDivElement>(null);
+
+    // Language options for different code types
+    const languageOptions = [
+        { value: 'plaintext', label: '📝 Plain Text' },
+        { value: 'json', label: '{} JSON' },
+        { value: 'xml', label: '📄 XML' },
+        { value: 'html', label: '🌐 HTML' },
+        { value: 'css', label: '🎨 CSS' },
+        { value: 'javascript', label: '⚡ JavaScript' },
+        { value: 'typescript', label: '🔷 TypeScript' },
+        { value: 'python', label: '🐍 Python' },
+        { value: 'java', label: '☕ Java' },
+        { value: 'csharp', label: 'C# C#' },
+        { value: 'cpp', label: 'C++ C++' },
+        { value: 'php', label: '🐘 PHP' },
+        { value: 'sql', label: '🗃️ SQL' },
+        { value: 'yaml', label: '📋 YAML' },
+        { value: 'markdown', label: '📖 Markdown' }
+    ];
+
+    // Simple word-level diff algorithm
+    const computeWordDiffs = (left: string, right: string): { leftDiffs: WordDiff[], rightDiffs: WordDiff[] } => {
+        if (left === right) {
+            return {
+                leftDiffs: [{ value: left }],
+                rightDiffs: [{ value: right }]
+            };
+        }
+
+        const leftWords = left.split(/(\s+)/).filter(word => word.length > 0);
+        const rightWords = right.split(/(\s+)/).filter(word => word.length > 0);
+
+        const leftDiffs: WordDiff[] = [];
+        const rightDiffs: WordDiff[] = [];
+
+        let i = 0, j = 0;
+
+        while (i < leftWords.length || j < rightWords.length) {
+            if (i < leftWords.length && j < rightWords.length && leftWords[i] === rightWords[j]) {
+                // Words match
+                leftDiffs.push({ value: leftWords[i] });
+                rightDiffs.push({ value: rightWords[j] });
+                i++;
+                j++;
+            } else {
+                // Words don't match - find the best match
+                let foundMatch = false;
+
+                // Look ahead in right for current left word
+                for (let k = j + 1; k < rightWords.length; k++) {
+                    if (leftWords[i] === rightWords[k]) {
+                        // Add removed words from left and added words from right
+                        for (let l = j; l < k; l++) {
+                            rightDiffs.push({ value: rightWords[l], added: true });
+                        }
+                        leftDiffs.push({ value: leftWords[i], removed: true });
+                        j = k + 1;
+                        i++;
+                        foundMatch = true;
+                        break;
+                    }
+                }
+
+                // Look ahead in left for current right word
+                if (!foundMatch) {
+                    for (let k = i + 1; k < leftWords.length; k++) {
+                        if (leftWords[k] === rightWords[j]) {
+                            // Add removed words from left and added words from right
+                            for (let l = i; l < k; l++) {
+                                leftDiffs.push({ value: leftWords[l], removed: true });
+                            }
+                            rightDiffs.push({ value: rightWords[j], added: true });
+                            i = k + 1;
+                            j++;
+                            foundMatch = true;
+                            break;
+                        }
+                    }
+                }
+
+                // If no match found, mark both as different
+                if (!foundMatch) {
+                    if (i < leftWords.length) {
+                        leftDiffs.push({ value: leftWords[i], removed: true });
+                        i++;
+                    }
+                    if (j < rightWords.length) {
+                        rightDiffs.push({ value: rightWords[j], added: true });
+                        j++;
+                    }
+                }
+            }
+        }
+
+        return { leftDiffs, rightDiffs };
+    };
+
+    // Perform line-by-line comparison with word-level diffs
     useEffect(() => {
         const leftLines = leftText.split('\n');
         const rightLines = rightText.split('\n');
@@ -31,64 +136,102 @@ const TextComparer = () => {
         for (let i = 0; i < maxLines; i++) {
             const leftLine = leftLines[i] || '';
             const rightLine = rightLines[i] || '';
+            const hasDifference = leftLine !== rightLine;
+
+            let wordDiffs: { leftDiffs: WordDiff[], rightDiffs: WordDiff[] } | undefined;
+
+            if (hasDifference) {
+                wordDiffs = computeWordDiffs(leftLine, rightLine);
+            }
 
             newDiffLines.push({
                 leftText: leftLine,
                 rightText: rightLine,
                 leftLineNumber: i + 1,
                 rightLineNumber: i + 1,
-                hasDifference: leftLine !== rightLine
+                hasDifference,
+                wordDiffs: wordDiffs ? { leftDiffs: wordDiffs.leftDiffs, rightDiffs: wordDiffs.rightDiffs } : undefined
             });
         }
 
         setDiffLines(newDiffLines);
     }, [leftText, rightText]);
 
-    // Sync scrolling between all panels
-    const syncScroll = (source: 'left' | 'right' | 'actions') => {
-        const scrollElements = [
-            leftContentRef.current,
-            rightContentRef.current,
-            actionsPanelRef.current,
-            leftLineNumbersRef.current,
-            rightLineNumbersRef.current
-        ];
+    // Auto-detect language based on content
+    useEffect(() => {
+        detectLanguage();
+    }, [leftText, rightText]);
 
-        if (scrollElements.every(el => el !== null)) {
-            let scrollTop: number;
+    const detectLanguage = () => {
+        const sampleText = leftText || rightText;
 
-            if (source === 'left') {
-                scrollTop = leftContentRef.current!.scrollTop;
-            } else if (source === 'right') {
-                scrollTop = rightContentRef.current!.scrollTop;
-            } else {
-                scrollTop = actionsPanelRef.current!.scrollTop;
-            }
-
-            // Sync all scrollable elements
-            scrollElements.forEach(el => {
-                if (el) {
-                    el.scrollTop = scrollTop;
-                }
-            });
+        if (sampleText.trim().startsWith('{') && sampleText.includes('"') && sampleText.includes(':')) {
+            setLanguage('json');
+        } else if (sampleText.includes('<?xml') || sampleText.includes('<html') || sampleText.trim().startsWith('<')) {
+            setLanguage('xml');
+        } else if (sampleText.includes('function') || sampleText.includes('const ') || sampleText.includes('let ')) {
+            setLanguage('javascript');
+        } else if (sampleText.includes('public class') || sampleText.includes('import java')) {
+            setLanguage('java');
+        } else if (sampleText.includes('using System') || sampleText.includes('namespace')) {
+            setLanguage('csharp');
+        } else if (sampleText.includes('def ') || sampleText.includes('import ')) {
+            setLanguage('python');
+        } else if (sampleText.includes('<?php')) {
+            setLanguage('php');
+        } else if (sampleText.includes('SELECT') || sampleText.includes('INSERT')) {
+            setLanguage('sql');
+        } else if (sampleText.includes('---') || sampleText.includes(': ')) {
+            setLanguage('yaml');
+        } else {
+            setLanguage('plaintext');
         }
+    };
+
+    // Monaco Editor callbacks
+    const handleLeftEditorDidMount = (editor: any) => {
+        leftEditorRef.current = editor;
+    };
+
+    const handleRightEditorDidMount = (editor: any) => {
+        rightEditorRef.current = editor;
     };
 
     // Copy line from left to right
     const copyLeftToRight = (lineIndex: number) => {
-        const newRightLines = rightText.split('\n');
-        newRightLines[lineIndex] = diffLines[lineIndex].leftText;
-        setRightText(newRightLines.join('\n'));
+        try {
+            const leftLines = leftText.split('\n');
+            const rightLines = rightText.split('\n');
+
+            while (rightLines.length <= lineIndex) {
+                rightLines.push('');
+            }
+
+            rightLines[lineIndex] = leftLines[lineIndex] || '';
+            setRightText(rightLines.join('\n'));
+        } catch (error) {
+            console.error('Error copying left to right:', error);
+        }
     };
 
     // Copy line from right to left
     const copyRightToLeft = (lineIndex: number) => {
-        const newLeftLines = leftText.split('\n');
-        newLeftLines[lineIndex] = diffLines[lineIndex].rightText;
-        setLeftText(newLeftLines.join('\n'));
+        try {
+            const leftLines = leftText.split('\n');
+            const rightLines = rightText.split('\n');
+
+            while (leftLines.length <= lineIndex) {
+                leftLines.push('');
+            }
+
+            leftLines[lineIndex] = rightLines[lineIndex] || '';
+            setLeftText(leftLines.join('\n'));
+        } catch (error) {
+            console.error('Error copying right to left:', error);
+        }
     };
 
-    // Clear both text areas
+    // Clear both editors
     const clearBoth = () => {
         setLeftText('');
         setRightText('');
@@ -100,113 +243,181 @@ const TextComparer = () => {
         setRightText(leftText);
     };
 
-    // Highlight differences within a line
-    const highlightDifferences = (leftStr: string, rightStr: string): { left: JSX.Element[], right: JSX.Element[] } => {
-        if (leftStr === rightStr) {
-            return {
-                left: [<span key="0" className="text-same">{leftStr}</span>],
-                right: [<span key="0" className="text-same">{rightStr}</span>]
-            };
+    // Paste to left editor
+    const pasteToLeft = async () => {
+        try {
+            const text = await navigator.clipboard.readText();
+            setLeftText(text);
+        } catch (error) {
+            console.error('Failed to read clipboard:', error);
+            alert('Clipboard access not supported. Please paste using Ctrl+V in the editor.');
         }
+    };
 
-        const leftChars = leftStr.split('');
-        const rightChars = rightStr.split('');
-        const maxLength = Math.max(leftChars.length, rightChars.length);
+    // Paste to right editor
+    const pasteToRight = async () => {
+        try {
+            const text = await navigator.clipboard.readText();
+            setRightText(text);
+        } catch (error) {
+            console.error('Failed to read clipboard:', error);
+            alert('Clipboard access not supported. Please paste using Ctrl+V in the editor.');
+        }
+    };
 
-        const leftSpans: JSX.Element[] = [];
-        const rightSpans: JSX.Element[] = [];
+    // Copy from left editor
+    const copyFromLeft = async () => {
+        try {
+            await navigator.clipboard.writeText(leftText);
+        } catch (error) {
+            console.error('Failed to copy to clipboard:', error);
+        }
+    };
 
-        for (let i = 0; i < maxLength; i++) {
-            const leftChar = leftChars[i] || '';
-            const rightChar = rightChars[i] || '';
+    // Copy from right editor
+    const copyFromRight = async () => {
+        try {
+            await navigator.clipboard.writeText(rightText);
+        } catch (error) {
+            console.error('Failed to copy to clipboard:', error);
+        }
+    };
 
-            if (leftChar === rightChar) {
-                // Same character
-                if (leftSpans.length > 0 && leftSpans[leftSpans.length - 1].props.className === 'text-same') {
-                    // Append to existing same span
-                    const lastSpan = leftSpans.pop()!;
-                    const lastRightSpan = rightSpans.pop()!;
-                    leftSpans.push(
-                        <span key={i} className="text-same">
-                            {lastSpan.props.children + leftChar}
-                        </span>
-                    );
-                    rightSpans.push(
-                        <span key={i} className="text-same">
-                            {lastRightSpan.props.children + rightChar}
-                        </span>
-                    );
-                } else {
-                    // Start new same span
-                    leftSpans.push(<span key={i} className="text-same">{leftChar}</span>);
-                    rightSpans.push(<span key={i} className="text-same">{rightChar}</span>);
-                }
-            } else {
-                // Different character
-                leftSpans.push(<span key={i} className="text-diff left-diff">{leftChar}</span>);
-                rightSpans.push(<span key={i} className="text-diff right-diff">{rightChar}</span>);
+    // Load sample code
+    const loadSampleCode = () => {
+        const samples: { [key: string]: { left: string, right: string } } = {
+            json: {
+                left: `{
+  "name": "John Doe",
+  "age": 30,
+  "email": "john@example.com",
+  "active": true
+}`,
+                right: `{
+  "name": "Jane Smith",
+  "age": 25,
+  "email": "jane@example.com",
+  "active": false
+}`
+            },
+            javascript: {
+                left: `function calculateTotal(price, quantity) {
+  const subtotal = price * quantity;
+  const tax = subtotal * 0.1;
+  return subtotal + tax;
+}`,
+                right: `function calculateTotal(price, quantity) {
+  const subtotal = price * quantity;
+  const tax = subtotal * 0.15;
+  return subtotal + tax;
+}`
             }
-        }
+        };
 
-        return { left: leftSpans, right: rightSpans };
+        const sample = samples[language] || {
+            left: `Left side example text\nwith some differences here\nand more changes there`,
+            right: `Right side example text\nwith some variations here\nand more modifications there`
+        };
+
+        setLeftText(sample.left);
+        setRightText(sample.right);
+    };
+
+    // Format code
+    const formatCode = () => {
+        alert(`Formatting for ${language} would be implemented here with proper formatters`);
+    };
+
+    // Render word differences with highlighting
+    const renderWordDiffs = (diffs: WordDiff[], isLeft: boolean) => {
+        return diffs.map((diff, index) => {
+            if (diff.removed) {
+                return (
+                    <span key={index} className="diff-word removed">
+                        {diff.value}
+                    </span>
+                );
+            } else if (diff.added) {
+                return (
+                    <span key={index} className="diff-word added">
+                        {diff.value}
+                    </span>
+                );
+            } else {
+                return (
+                    <span key={index} className="diff-word same">
+                        {diff.value}
+                    </span>
+                );
+            }
+        });
     };
 
     return (
         <div className="text-comparer">
             <div className="comparer-header">
-                <h2>Text Comparer</h2>
+                <h2>Code & Text Comparer</h2>
                 <div className="toolbar">
-                    <button onClick={clearBoth}>Clear Both</button>
-                    <button onClick={swapContent}>Swap Content</button>
+                    <select
+                        value={language}
+                        onChange={(e) => setLanguage(e.target.value)}
+                        className="language-select"
+                    >
+                        {languageOptions.map(option => (
+                            <option key={option.value} value={option.value}>
+                                {option.label}
+                            </option>
+                        ))}
+                    </select>
+
+                    <button onClick={loadSampleCode}>📋 Load Sample</button>
+                    <button onClick={formatCode}>🛠️ Format</button>
+                    <button onClick={pasteToLeft}>📋 Paste Left</button>
+                    <button onClick={pasteToRight}>📋 Paste Right</button>
+                    <button onClick={copyFromLeft}>📄 Copy Left</button>
+                    <button onClick={copyFromRight}>📄 Copy Right</button>
+                    <button onClick={swapContent}>🔄 Swap</button>
+                    <button onClick={clearBoth}>🗑️ Clear</button>
+                    <button onClick={() => setEditorTheme(editorTheme === 'vs' ? 'vs-dark' : 'vs')}>
+                        {editorTheme === 'vs' ? '🌙 Dark' : '☀️ Light'}
+                    </button>
                 </div>
             </div>
 
             <div className="comparer-container">
-                {/* Left Panel - Shows LEFT text */}
+                {/* Left Panel */}
                 <div className="text-panel left-panel">
                     <div className="panel-header">
                         <h3>Text A</h3>
                         <span className="line-count">{leftText.split('\n').length} lines</span>
                     </div>
-                    <div className="text-container">
-                        <div
-                            ref={leftLineNumbersRef}
-                            className="line-numbers left-line-numbers"
-                            onScroll={() => syncScroll('left')}
-                        >
-                            {diffLines.map((line, index) => (
-                                <div
-                                    key={index}
-                                    className={`line-number ${line.hasDifference ? 'different' : ''}`}
-                                >
-                                    {line.leftLineNumber}
-                                </div>
-                            ))}
-                        </div>
-                        <div
-                            ref={leftContentRef}
-                            className="text-content left-content"
-                            onScroll={() => syncScroll('left')}
-                        >
-                            {diffLines.map((line, index) => {
-                                const highlighted = highlightDifferences(line.leftText, line.rightText);
-                                return (
-                                    <div
-                                        key={index}
-                                        className={`text-line ${line.hasDifference ? 'line-different' : ''}`}
-                                    >
-                                        {highlighted.left}
-                                    </div>
-                                );
-                            })}
-                        </div>
+                    <div className="editor-container">
+                        <Editor
+                            height="100%"
+                            language={language}
+                            value={leftText}
+                            onChange={(value) => setLeftText(value || '')}
+                            onMount={handleLeftEditorDidMount}
+                            theme={editorTheme}
+                            options={{
+                                minimap: { enabled: false },
+                                fontSize: 14,
+                                lineNumbers: 'on',
+                                scrollBeyondLastLine: false,
+                                automaticLayout: true,
+                                tabSize: 2,
+                                insertSpaces: true,
+                                formatOnPaste: true,
+                                formatOnType: true,
+                            }}
+                        />
                     </div>
                 </div>
 
-                {/* Comparison Panel - Only buttons */}
+                {/* Comparison Panel */}
                 <div className="comparison-panel">
                     <div className="panel-header">
-                        <h3>Actions</h3>
+                        <h3>Line Actions</h3>
                         <span className="diff-count">
                             {diffLines.filter(line => line.hasDifference).length} diff
                         </span>
@@ -214,80 +425,106 @@ const TextComparer = () => {
                     <div
                         ref={actionsPanelRef}
                         className="diff-actions-panel"
-                        onScroll={() => syncScroll('actions')}
                     >
-                        {diffLines.map((line, index) => (
-                            <div
-                                key={index}
-                                className={`action-line ${line.hasDifference ? 'different' : ''}`}
-                            >
-                                {line.hasDifference && (
-                                    <div className="action-buttons">
-                                        <button
-                                            onClick={() => copyLeftToRight(index)}
-                                            className="action-btn left-to-right"
-                                            title="Copy left to right"
-                                        >
-                                            →
-                                        </button>
-                                        <button
-                                            onClick={() => copyRightToLeft(index)}
-                                            className="action-btn right-to-left"
-                                            title="Copy right to left"
-                                        >
-                                            ←
-                                        </button>
-                                    </div>
-                                )}
-                            </div>
-                        ))}
-                    </div>
-                </div>
-
-                {/* Right Panel - Shows RIGHT text */}
-                <div className="text-panel right-panel">
-                    <div className="panel-header">
-                        <h3>Text B</h3>
-                        <span className="line-count">{rightText.split('\n').length} lines</span>
-                    </div>
-                    <div className="text-container">
-                        <div
-                            ref={rightContentRef}
-                            className="text-content right-content"
-                            onScroll={() => syncScroll('right')}
-                        >
-                            {diffLines.map((line, index) => {
-                                const highlighted = highlightDifferences(line.leftText, line.rightText);
-                                return (
-                                    <div
-                                        key={index}
-                                        className={`text-line ${line.hasDifference ? 'line-different' : ''}`}
-                                    >
-                                        {highlighted.right}
-                                    </div>
-                                );
-                            })}
-                        </div>
-                        <div
-                            ref={rightLineNumbersRef}
-                            className="line-numbers right-line-numbers"
-                            onScroll={() => syncScroll('right')}
-                        >
+                        <div className="actions-container">
                             {diffLines.map((line, index) => (
                                 <div
                                     key={index}
-                                    className={`line-number ${line.hasDifference ? 'different' : ''}`}
+                                    className={`action-line ${line.hasDifference ? 'different' : ''}`}
                                 >
-                                    {line.rightLineNumber}
+                                    {line.hasDifference && (
+                                        <div className="action-buttons">
+                                            <button
+                                                onClick={() => copyLeftToRight(index)}
+                                                className="action-btn left-to-right"
+                                                title={`Copy line ${index + 1} from left to right`}
+                                            >
+                                                →
+                                            </button>
+                                            <button
+                                                onClick={() => copyRightToLeft(index)}
+                                                className="action-btn right-to-left"
+                                                title={`Copy line ${index + 1} from right to left`}
+                                            >
+                                                ←
+                                            </button>
+                                        </div>
+                                    )}
+                                    <div className="line-number">
+                                        {index + 1}
+                                    </div>
                                 </div>
                             ))}
                         </div>
                     </div>
                 </div>
+
+                {/* Right Panel */}
+                <div className="text-panel right-panel">
+                    <div className="panel-header">
+                        <h3>Text B</h3>
+                        <span className="line-count">{rightText.split('\n').length} lines</span>
+                    </div>
+                    <div className="editor-container">
+                        <Editor
+                            height="100%"
+                            language={language}
+                            value={rightText}
+                            onChange={(value) => setRightText(value || '')}
+                            onMount={handleRightEditorDidMount}
+                            theme={editorTheme}
+                            options={{
+                                minimap: { enabled: false },
+                                fontSize: 14,
+                                lineNumbers: 'on',
+                                scrollBeyondLastLine: false,
+                                automaticLayout: true,
+                                tabSize: 2,
+                                insertSpaces: true,
+                                formatOnPaste: true,
+                                formatOnType: true,
+                            }}
+                        />
+                    </div>
+                </div>
             </div>
+
+            {/* Word Diff Preview */}
+            {diffLines.some(line => line.hasDifference && line.wordDiffs) && (
+                <div className="word-diff-preview">
+                    <div className="preview-header">
+                        <h4>🔍 Word-level Differences</h4>
+                    </div>
+                    <div className="preview-content">
+                        {diffLines
+                            .filter(line => line.hasDifference && line.wordDiffs)
+                            .map((line, index) => (
+                                <div key={index} className="word-diff-line">
+                                    <div className="diff-line-number">Line {line.leftLineNumber}:</div>
+                                    <div className="word-diffs">
+                                        <div className="left-diff">
+                                            <strong>Left:</strong>
+                                            {line.wordDiffs && renderWordDiffs(line.wordDiffs.leftDiffs, true)}
+                                        </div>
+                                        <div className="right-diff">
+                                            <strong>Right:</strong>
+                                            {line.wordDiffs && renderWordDiffs(line.wordDiffs.rightDiffs, false)}
+                                        </div>
+                                    </div>
+                                </div>
+                            ))}
+                    </div>
+                </div>
+            )}
 
             {/* Summary */}
             <div className="comparer-summary">
+                <div className="summary-item">
+                    <span className="label">Language:</span>
+                    <span className="value language-name">
+                        {languageOptions.find(opt => opt.value === language)?.label || language}
+                    </span>
+                </div>
                 <div className="summary-item">
                     <span className="label">Total lines:</span>
                     <span className="value">{diffLines.length}</span>

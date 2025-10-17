@@ -1,496 +1,554 @@
-﻿// src/pages/JsonEditorPage.tsx - UPDATED VERSION
-import { useState, useEffect, useRef, useCallback } from "react";
-import Toolbar from "../components/Toolbar";
-import TreeView from "../components/TreeView";
-import EnhancedSearchBar from "../components/EnhancedSearchBar";
-import UrlLoaderModal from "../components/UrlLoaderModal";
-import Notification from "../components/Notification";
-import EnhancedTextArea from "../components/EnhancedTextArea";
-import { useUndoRedo } from "../hooks/useUndoRedo";
-import type { SearchMatch } from "../utils/searchUtils";
-import { findAllMatches, replaceMatch, replaceAllMatches } from "../utils/searchUtils";
-import {
-    formatJson,
-    minifyJson,
-    removeWhitespace,
-    validateJsonDetailed,
-    downloadJsonFile,
-    readFileAsText,
-    fetchJsonFromUrl,
-    generateFilename
-} from "../utils/jsonUtils";
-import ExportPanel from '../components/ExportPanel';
-import type { SchemaValidationResult } from '../utils/schemaUtils';
-import SEOLanding from '../components/SEOLanding';
-import ConversionModal from '../components/ConversionModal';
+﻿// src/pages/JsonEditorPage.tsx
+import React, { useState, useEffect, useRef } from 'react';
+import Editor from '@monaco-editor/react';
+import './JsonEditorPage.css';
 
-const useDebounce = <T,>(value: T, delay: number): T => {
-    const [debouncedValue, setDebouncedValue] = useState<T>(value);
+interface JsonError {
+    message: string;
+    line: number;
+    column: number;
+}
 
-    useEffect(() => {
-        const handler = setTimeout(() => {
-            setDebouncedValue(value);
-        }, delay);
-
-        return () => {
-            clearTimeout(handler);
-        };
-    }, [value, delay]);
-
-    return debouncedValue;
-};
+interface TreeNode {
+    key: string;
+    value: any;
+    type: 'object' | 'array' | 'string' | 'number' | 'boolean' | 'null';
+    depth: number;
+    path: string;
+    isExpanded: boolean;
+}
 
 const JsonEditorPage: React.FC = () => {
-    // Refs
-    const textareaRef = useRef<HTMLTextAreaElement>(null);
+    const [jsonText, setJsonText] = useState<string>(
+        JSON.stringify(
+            {
+                name: "John Doe",
+                age: 30,
+                email: "john@example.com",
+                hobbies: ["reading", "gaming", "coding"],
+                address: {
+                    street: "123 Main St",
+                    city: "Anytown",
+                    country: "USA"
+                },
+                active: true,
+                scores: [95, 87, 92]
+            },
+            null,
+            2
+        )
+    );
+    const [errors, setErrors] = useState<JsonError[]>([]);
+    const [isValid, setIsValid] = useState<boolean>(true);
+    const [viewMode, setViewMode] = useState<'code' | 'tree' | 'split'>('split');
+    const [editorTheme, setEditorTheme] = useState<'vs' | 'vs-dark'>('vs');
+    const [treeData, setTreeData] = useState<TreeNode[]>([]);
+    const [splitPosition, setSplitPosition] = useState<number>(50);
 
-    // Undo/Redo State
-    const {
-        state: leftJson,
-        setState: setLeftJson,
-        undo: undoLeft,
-        redo: redoLeft,
-        canUndo: canUndoLeft,
-        canRedo: canRedoLeft,
-    } = useUndoRedo(`{
-  "name": "John Doe",
-  "age": 30,
-  "active": true,
-  "hobbies": ["reading", "gaming", "coding"],
-  "address": {
-    "street": "123 Main St",
-    "city": "Boston",
-    "coordinates": { "lat": 42.3601, "lng": -71.0589 }
-  }
-}`);
+    const editorRef = useRef<any>(null);
+    const containerRef = useRef<HTMLDivElement>(null);
+    const isResizing = useRef(false);
 
-    // Basic States
-    const [rightJson, setRightJson] = useState(leftJson);
-    const [searchTerm, setSearchTerm] = useState("");
-    const [replaceTerm, setReplaceTerm] = useState("");
-    const [matchCase, setMatchCase] = useState(false);
-    const [useRegex, setUseRegex] = useState(false);
-    const [showReplace, setShowReplace] = useState(false);
-    const [searchMatches, setSearchMatches] = useState<SearchMatch[]>([]);
-    const [currentMatchIndex, setCurrentMatchIndex] = useState<number>(-1);
-    const [searchResults, setSearchResults] = useState<number>(0);
-    const [currentSearchIndex, setCurrentSearchIndex] = useState<number>(0);
-    const [leftView, setLeftView] = useState<"text" | "tree">("text");
-    const [rightView, setRightView] = useState<"text" | "tree">("tree");
-    const [isUrlModalOpen, setIsUrlModalOpen] = useState(false);
-    const [isLoadingUrl, setIsLoadingUrl] = useState(false);
-    const [urlError, setUrlError] = useState("");
-    const [notification, setNotification] = useState<{ message: string; type: 'success' | 'error' | 'info' } | null>(null);
-    const debouncedSearchTerm = useDebounce(searchTerm, 300); // 300ms delay
-    const [isSearching, setIsSearching] = useState(false);
-    const searchControllerRef = useRef<AbortController | null>(null);
-    const [showSchemaValidator, setShowSchemaValidator] = useState(false);
-    const [showExportPanel, setShowExportPanel] = useState(false);
-    const [isConversionModalOpen, setIsConversionModalOpen] = useState(false); // NEW: Conversion modal state
-
-    // Validation
-    const validation = validateJsonDetailed(leftJson);
-
-    // Search Handlers
-    const scrollToMatch = useCallback((match: SearchMatch) => {
-        const lineHeight = 20;
-        const scrollPosition = (match.line - 1) * lineHeight - 100;
-        if (textareaRef.current) {
-            textareaRef.current.scrollTo({
-                top: Math.max(scrollPosition, 0),
-                behavior: "smooth",
-            });
-        }
-    }, []);
-
-    const handleNextResult = useCallback(() => {
-        if (searchMatches.length === 0) return;
-        const nextIndex = (currentMatchIndex + 1) % searchMatches.length;
-        setCurrentMatchIndex(nextIndex);
-        scrollToMatch(searchMatches[nextIndex]);
-    }, [searchMatches, currentMatchIndex, scrollToMatch]);
-
-    const handlePrevResult = useCallback(() => {
-        if (searchMatches.length === 0) return;
-        const prevIndex = (currentMatchIndex - 1 + searchMatches.length) % searchMatches.length;
-        setCurrentMatchIndex(prevIndex);
-        scrollToMatch(searchMatches[prevIndex]);
-    }, [searchMatches, currentMatchIndex, scrollToMatch]);
-
-    const handleReplace = useCallback(() => {
-        if (currentMatchIndex === -1 || searchMatches.length === 0) return;
-        const currentMatch = searchMatches[currentMatchIndex];
-        const newJson = replaceMatch(leftJson, currentMatch, replaceTerm);
-        setLeftJson(newJson);
-        const newMatches = findAllMatches(newJson, searchTerm, { matchCase, useRegex });
-        setSearchMatches(newMatches);
-        const newIndex = newMatches.length > 0
-            ? Math.min(currentMatchIndex, newMatches.length - 1)
-            : -1;
-        setCurrentMatchIndex(newIndex);
-    }, [leftJson, searchMatches, currentMatchIndex, replaceTerm, searchTerm, matchCase, useRegex, setLeftJson]);
-
-    const handleReplaceAll = useCallback(() => {
-        if (searchMatches.length === 0) return;
-        const newJson = replaceAllMatches(leftJson, searchMatches, replaceTerm);
-        setLeftJson(newJson);
-        setSearchMatches([]);
-        setCurrentMatchIndex(-1);
-        setNotification({
-            message: `Replaced ${searchMatches.length} occurrences`,
-            type: "success"
-        });
-    }, [leftJson, searchMatches, replaceTerm, setLeftJson]);
-
-    // Other Handlers
-    const handleClear = useCallback(() => {
-        setLeftJson("");
-    }, [setLeftJson]);
-
-    const handleFormat = useCallback(() => {
-        try {
-            const formatted = formatJson(leftJson);
-            setLeftJson(formatted);
-            setNotification({ message: "JSON formatted!", type: "success" });
-        } catch (e) {
-            setNotification({ message: "Invalid JSON - cannot format", type: "error" });
-        }
-    }, [leftJson, setLeftJson]);
-
-    const handleMinify = useCallback(() => {
-        try {
-            const minified = minifyJson(leftJson);
-            setLeftJson(minified);
-            setNotification({ message: "JSON minified!", type: "success" });
-        } catch (e) {
-            setNotification({ message: "Invalid JSON - cannot minify", type: "error" });
-        }
-    }, [leftJson, setLeftJson]);
-
-    const handleRemoveSpaces = useCallback(() => {
-        const noSpaces = removeWhitespace(leftJson);
-        setLeftJson(noSpaces);
-        setNotification({ message: "Spaces removed!", type: "success" });
-    }, [leftJson, setLeftJson]);
-
-    const handleCopyRight = () => {
-        navigator.clipboard.writeText(rightJson);
-        setNotification({ message: "Copied to clipboard!", type: "success" });
-    };
-
-    const handleCopyLeft = () => {
-        setLeftJson(rightJson);
-        setNotification({ message: "Content copied!", type: "success" });
-    };
-
-    const handleLeftToggleView = () => {
-        setLeftView(leftView === "text" ? "tree" : "text");
-    };
-
-    const handleRightToggleView = () => {
-        setRightView(rightView === "text" ? "tree" : "text");
-    };
-
-    const handleSearchResults = (count: number) => {
-        setSearchResults(count);
-        setCurrentSearchIndex(count > 0 ? 1 : 0);
-    };
-
-    const handleNextSearchResult = () => {
-        if (currentSearchIndex < searchResults) {
-            setCurrentSearchIndex(currentSearchIndex + 1);
-        } else {
-            setCurrentSearchIndex(1);
-        }
-    };
-
-    const handleFileUpload = async (file: File) => {
-        try {
-            const content = await readFileAsText(file);
-            setLeftJson(content);
-            setNotification({ message: "File uploaded successfully!", type: "success" });
-        } catch (e) {
-            setNotification({ message: "Failed to read file", type: "error" });
-        }
-    };
-
-    const handleDownload = () => {
-        const success = downloadJsonFile(leftJson, generateFilename());
-        if (success) {
-            setNotification({ message: "File downloaded successfully!", type: "success" });
-        } else {
-            setNotification({ message: "Invalid JSON - cannot download", type: "error" });
-        }
-    };
-
-    const handleLoadFromUrl = () => {
-        setIsUrlModalOpen(true);
-        setUrlError("");
-    };
-
-    const handleUrlLoad = async (url: string) => {
-        setIsLoadingUrl(true);
-        setUrlError("");
-        const result = await fetchJsonFromUrl(url);
-        if (result.success && result.data) {
-            setLeftJson(result.data);
-            setIsUrlModalOpen(false);
-            setNotification({ message: "JSON loaded from URL!", type: "success" });
-        } else {
-            setUrlError(result.error || "Failed to load JSON from URL");
-            setNotification({ message: "Failed to load from URL", type: "error" });
-        }
-        setIsLoadingUrl(false);
-    };
-
-    const handleCloseUrlModal = () => {
-        setIsUrlModalOpen(false);
-        setUrlError("");
-    };
-
-    const handleLeftJsonChange = useCallback((newValue: string) => {
-        setLeftJson(newValue);
-    }, [setLeftJson]);
-
-    // NEW: Handle conversion
-    const handleConvertedData = (convertedData: string, targetFormat: 'json' | 'xml' | 'yaml') => {
-        // For now, copy to clipboard and show notification
-        navigator.clipboard.writeText(convertedData);
-        setNotification({
-            message: `Converted to ${targetFormat.toUpperCase()} and copied to clipboard!`,
-            type: "success"
-        });
-    };
-
-    // Effects
+    // Validate JSON and build tree data when JSON changes
     useEffect(() => {
-        setRightJson(leftJson);
-    }, [leftJson]);
+        validateAndBuildTree(jsonText);
+    }, [jsonText]);
 
+    // Rebuild tree data when switching views
     useEffect(() => {
-        if (!debouncedSearchTerm) {
-            setSearchMatches([]);
-            setCurrentMatchIndex(-1);
-            setIsSearching(false);
-            return;
+        if ((viewMode === 'tree' || viewMode === 'split') && isValid && jsonText.trim()) {
+            validateAndBuildTree(jsonText);
         }
+    }, [viewMode]);
 
-        // Cancel previous search
-        if (searchControllerRef.current) {
-            searchControllerRef.current.abort();
-        }
+    // EXACT SAME RESIZE IMPLEMENTATION AS XML/YAML EDITORS
+    useEffect(() => {
+        const handleMouseMove = (e: MouseEvent) => {
+            if (!isResizing.current || !containerRef.current) return;
 
-        const controller = new AbortController();
-        searchControllerRef.current = controller;
-        setIsSearching(true);
+            const containerRect = containerRef.current.getBoundingClientRect();
+            const newPosition = ((e.clientX - containerRect.left) / containerRect.width) * 100;
 
-        const searchTimeout = setTimeout(() => {
-            const startTime = performance.now();
+            // Limit between 20% and 80%
+            const clampedPosition = Math.max(20, Math.min(80, newPosition));
+            setSplitPosition(clampedPosition);
+        };
 
-            try {
-                const matches = findAllMatches(leftJson, debouncedSearchTerm, { matchCase, useRegex });
+        const handleMouseUp = () => {
+            isResizing.current = false;
+            document.body.style.removeProperty('cursor');
+            document.body.style.removeProperty('user-select');
+            document.body.style.removeProperty('pointer-events');
+        };
 
-                if (!controller.signal.aborted) {
-                    const endTime = performance.now();
-                    console.log(`Search took ${endTime - startTime} milliseconds, found ${matches.length} matches`);
-
-                    setSearchMatches(matches);
-                    setCurrentMatchIndex(matches.length > 0 ? 0 : -1);
-                    setIsSearching(false);
-                }
-            } catch (error) {
-                if (!controller.signal.aborted) {
-                    console.error('Search error:', error);
-                    setIsSearching(false);
-                }
-            }
-        }, 0);
+        document.addEventListener('mousemove', handleMouseMove);
+        document.addEventListener('mouseup', handleMouseUp);
 
         return () => {
-            clearTimeout(searchTimeout);
-            controller.abort();
-            setIsSearching(false);
+            document.removeEventListener('mousemove', handleMouseMove);
+            document.removeEventListener('mouseup', handleMouseUp);
         };
-    }, [debouncedSearchTerm, leftJson, matchCase, useRegex]);
+    }, []);
 
-    useEffect(() => {
-        if (!validation.valid && validation.line && textareaRef.current) {
-            const lineHeight = 20;
-            const scrollPosition = (validation.line - 1) * lineHeight - 40;
-            textareaRef.current.scrollTo({
-                top: Math.max(scrollPosition, 0),
-                behavior: "smooth",
+    const validateAndBuildTree = (text: string) => {
+        try {
+            if (text.trim() === '') {
+                setErrors([]);
+                setIsValid(true);
+                setTreeData([]);
+                return;
+            }
+
+            const parsed = JSON.parse(text);
+            setErrors([]);
+            setIsValid(true);
+            const newTreeData = buildTreeData(parsed);
+            setTreeData(newTreeData);
+        } catch (error) {
+            const errorMessage = error instanceof Error ? error.message : 'Invalid JSON';
+            const lineMatch = errorMessage.match(/line (\d+)/);
+            const line = lineMatch ? parseInt(lineMatch[1]) : 1;
+
+            setErrors([{
+                message: errorMessage,
+                line: line,
+                column: 0
+            }]);
+            setIsValid(false);
+            setTreeData([]);
+        }
+    };
+
+    // Build tree data from JSON
+    const buildTreeData = (data: any, path: string = '', depth: number = 0): TreeNode[] => {
+        const nodes: TreeNode[] = [];
+
+        if (typeof data === 'object' && data !== null) {
+            const isArray = Array.isArray(data);
+            const keys = isArray ? [...data.keys()] : Object.keys(data);
+
+            keys.forEach((key: any) => {
+                const value = data[key];
+                const currentPath = path ? `${path}.${key}` : key.toString();
+                const nodeType = Array.isArray(value) ? 'array' :
+                    typeof value === 'object' && value !== null ? 'object' :
+                        typeof value as any;
+
+                const node: TreeNode = {
+                    key: isArray ? `[${key}]` : key.toString(),
+                    value: value,
+                    type: nodeType,
+                    depth: depth,
+                    path: currentPath,
+                    isExpanded: depth < 2
+                };
+                nodes.push(node);
             });
         }
-    }, [validation]);
 
-    useEffect(() => {
-        const handleKeyDown = (e: KeyboardEvent) => {
-            if ((e.ctrlKey || e.metaKey) && !e.shiftKey && e.key === 'z') {
-                e.preventDefault();
-                if (canUndoLeft) undoLeft();
-            } else if ((e.ctrlKey || e.metaKey) && e.shiftKey && e.key === 'z') {
-                e.preventDefault();
-                if (canRedoLeft) redoLeft();
-            } else if ((e.ctrlKey || e.metaKey) && e.key === 'y') {
-                e.preventDefault();
-                if (canRedoLeft) redoLeft();
-            } else if ((e.ctrlKey || e.metaKey) && e.key === 'f') {
-                e.preventDefault();
-            } else if (e.key === 'F3') {
-                e.preventDefault();
-                if (e.shiftKey) {
-                    handlePrevResult();
-                } else {
-                    handleNextResult();
-                }
-            }
+        return nodes;
+    };
+
+    // Monaco Editor callbacks
+    const handleEditorDidMount = (editor: any, monaco: any) => {
+        editorRef.current = editor;
+
+        monaco.languages.json.jsonDefaults.setDiagnosticsOptions({
+            validate: true,
+            allowComments: false,
+            schemas: []
+        });
+    };
+
+    const handleEditorChange = (value: string | undefined) => {
+        setJsonText(value || '');
+    };
+
+    // EXACT SAME RESIZE START HANDLER AS XML/YAML EDITORS
+    const handleResizeStart = (e: React.MouseEvent) => {
+        e.preventDefault();
+        isResizing.current = true;
+        document.body.style.cursor = 'col-resize';
+        document.body.style.userSelect = 'none';
+        document.body.style.pointerEvents = 'none';
+    };
+
+    // Tree view functions
+    const toggleNode = (path: string) => {
+        setTreeData(prev => prev.map(node =>
+            node.path === path ? { ...node, isExpanded: !node.isExpanded } : node
+        ));
+    };
+
+    const formatValue = (value: any, type: string): string => {
+        if (type === 'string') return `"${value}"`;
+        if (type === 'null') return 'null';
+        if (type === 'boolean') return value.toString();
+        if (type === 'number') return value.toString();
+        if (type === 'array') return `Array[${value.length}]`;
+        if (type === 'object') return `Object{${Object.keys(value).length}}`;
+        return String(value);
+    };
+
+    const getTypeColor = (type: string): string => {
+        const colors: { [key: string]: string } = {
+            string: '#ce9178',
+            number: '#b5cea8',
+            boolean: '#569cd6',
+            null: '#569cd6',
+            object: '#ffd700',
+            array: '#ffd700'
         };
-        document.addEventListener('keydown', handleKeyDown);
-        return () => document.removeEventListener('keydown', handleKeyDown);
-    }, [canUndoLeft, canRedoLeft, undoLeft, redoLeft, handleNextResult, handlePrevResult]);
+        return colors[type] || '#cccccc';
+    };
 
-    // Search display variables
-    const resultsCount = searchMatches.length;
-    const currentResult = currentMatchIndex + 1;
+    // Recursive tree node rendering
+    const renderTreeNodes = (nodes: TreeNode[]): JSX.Element[] => {
+        return nodes.map((node) => {
+            const childNodes = (node.type === 'object' || node.type === 'array') && node.isExpanded
+                ? buildTreeData(node.value, node.path, node.depth + 1)
+                : [];
+
+            return (
+                <div key={node.path} className="tree-node">
+                    <div
+                        className="tree-node-content"
+                        style={{ paddingLeft: `${node.depth * 20 + 10}px` }}
+                        onClick={() => (node.type === 'object' || node.type === 'array') && toggleNode(node.path)}
+                    >
+                        {(node.type === 'object' || node.type === 'array') && (
+                            <span className="expand-icon">
+                                {node.isExpanded ? '▼' : '►'}
+                            </span>
+                        )}
+                        <span className="node-key">{node.key}:</span>
+                        <span
+                            className="node-value"
+                            style={{ color: getTypeColor(node.type) }}
+                        >
+                            {formatValue(node.value, node.type)}
+                        </span>
+                        <span className="node-type">({node.type})</span>
+                    </div>
+
+                    {(node.type === 'object' || node.type === 'array') && node.isExpanded && (
+                        <div className="node-children">
+                            {renderTreeNodes(childNodes)}
+                        </div>
+                    )}
+                </div>
+            );
+        });
+    };
+
+    // Handle view mode change
+    const handleViewModeChange = (mode: 'code' | 'tree' | 'split') => {
+        setViewMode(mode);
+        if ((mode === 'tree' || mode === 'split') && isValid && jsonText.trim()) {
+            try {
+                const parsed = JSON.parse(jsonText);
+                const newTreeData = buildTreeData(parsed);
+                setTreeData(newTreeData);
+            } catch (error) {
+                console.error('Error building tree data:', error);
+                setTreeData([]);
+            }
+        }
+    };
+
+    // Existing functions
+    const formatJSON = () => {
+        try {
+            const parsed = JSON.parse(jsonText);
+            const formatted = JSON.stringify(parsed, null, 2);
+            setJsonText(formatted);
+        } catch (error) {
+            setErrors([{
+                message: 'Cannot format invalid JSON',
+                line: 1,
+                column: 0
+            }]);
+        }
+    };
+
+    const compactJSON = () => {
+        try {
+            const parsed = JSON.parse(jsonText);
+            const compacted = JSON.stringify(parsed);
+            setJsonText(compacted);
+        } catch (error) {
+            setErrors([{
+                message: 'Cannot compact invalid JSON',
+                line: 1,
+                column: 0
+            }]);
+        }
+    };
+
+    const clearEditor = () => {
+        setJsonText('');
+        setErrors([]);
+        setIsValid(true);
+        setTreeData([]);
+    };
+
+    const pasteJSON = async () => {
+        try {
+            const text = await navigator.clipboard.readText();
+            setJsonText(text);
+        } catch (error) {
+            console.error('Failed to read clipboard:', error);
+        }
+    };
+
+    const copyJSON = async () => {
+        try {
+            await navigator.clipboard.writeText(jsonText);
+        } catch (error) {
+            console.error('Failed to copy to clipboard:', error);
+        }
+    };
+
+    const toggleTheme = () => {
+        setEditorTheme(editorTheme === 'vs' ? 'vs-dark' : 'vs');
+    };
+
+    const handleErrorClick = (error: JsonError) => {
+        if (editorRef.current) {
+            const position = {
+                lineNumber: error.line,
+                column: error.column + 1
+            };
+            editorRef.current.setPosition(position);
+            editorRef.current.revealLineInCenter(error.line);
+            editorRef.current.focus();
+        }
+    };
 
     return (
-        <div className="min-h-screen bg-gray-50 p-6 dark:bg-gray-900 transition-colors">
-            <div className="flex items-center justify-between mb-6">
-                <h1 className="text-3xl font-bold text-indigo-600 dark:text-indigo-400">
-                    🧩 JSON Editor
-                </h1>
-            </div>
+        <div className="json-editor-page">
+            <div className="editor-header">
+                <h2>JSON Editor</h2>
+                <div className="editor-toolbar">
+                    <div className="view-toggle">
+                        <button
+                            className={viewMode === 'code' ? 'active' : ''}
+                            onClick={() => handleViewModeChange('code')}
+                        >
+                            💻 Code
+                        </button>
+                        <button
+                            className={viewMode === 'split' ? 'active' : ''}
+                            onClick={() => handleViewModeChange('split')}
+                        >
+                            🪟 Split
+                        </button>
+                        <button
+                            className={viewMode === 'tree' ? 'active' : ''}
+                            onClick={() => handleViewModeChange('tree')}
+                        >
+                            🌳 Tree
+                        </button>
+                    </div>
 
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                {/* Left Panel */}
-                <div className="bg-white rounded-xl shadow-md p-4 dark:bg-gray-800 dark:shadow-gray-900">
-                    <h2 className="text-lg font-semibold text-gray-700 mb-3 dark:text-gray-300">
-                        {leftView === "text" ? "JSON Input" : "JSON Tree"}
-                    </h2>
-
-                    <Toolbar
-                        onClear={handleClear}
-                        onFormat={handleFormat}
-                        onMinify={handleMinify}
-                        onRemoveSpaces={handleRemoveSpaces}
-                        onCopy={handleCopyRight}
-                        onToggleView={handleLeftToggleView}
-                        onUpload={handleFileUpload}
-                        onDownload={handleDownload}
-                        onLoadFromUrl={handleLoadFromUrl}
-                        onUndo={undoLeft}
-                        onRedo={redoLeft}
-                        canUndo={canUndoLeft}
-                        canRedo={canRedoLeft}
-                        direction="right"
-                        viewType={leftView}
-                        onSchemaValidate={() => setShowSchemaValidator(!showSchemaValidator)}
-                        onExport={() => setShowExportPanel(!showExportPanel)}
-                        onConvert={() => setIsConversionModalOpen(true)} // NEW: Conversion handler
-                    />
-
-                    {leftView === "text" ? (
-                        <EnhancedTextArea
-                            value={leftJson}
-                            onChange={handleLeftJsonChange}
-                            errorLine={!validation.valid ? validation.line : undefined}
-                            errorMessage={!validation.valid ? `Error: ${validation.message} (Line ${validation.line}, Column ${validation.column})` : undefined}
-                            height={500}
-                            searchMatches={searchMatches}
-                            currentMatchIndex={currentMatchIndex}
-                        />
-                    ) : (
-                        <div className="border border-gray-200 rounded-md h-[500px] overflow-auto p-3 dark:border-gray-700 dark:bg-gray-900">
-                            <TreeView jsonText={leftJson} />
-                        </div>
-                    )}
-
-                    {showExportPanel && (
-                        <ExportPanel json={leftJson} />
-                    )}
-                </div>
-
-                {/* Right Panel */}
-                <div className="bg-white rounded-xl shadow-md p-4">
-                    <h2 className="text-lg font-semibold text-gray-700 mb-3">
-                        {rightView === "text" ? "JSON Text" : "JSON Tree View"}
-                    </h2>
-
-                    <EnhancedSearchBar
-                        searchTerm={searchTerm}
-                        setSearchTerm={setSearchTerm}
-                        replaceTerm={replaceTerm}
-                        setReplaceTerm={setReplaceTerm}
-                        resultsCount={resultsCount}
-                        currentResult={currentResult}
-                        onNextResult={handleNextResult}
-                        onPrevResult={handlePrevResult}
-                        onReplace={handleReplace}
-                        onReplaceAll={handleReplaceAll}
-                        matchCase={matchCase}
-                        setMatchCase={setMatchCase}
-                        useRegex={useRegex}
-                        setUseRegex={setUseRegex}
-                        showReplace={showReplace}
-                        setShowReplace={setShowReplace}
-                        isSearching={isSearching}
-                    />
-
-                    <Toolbar
-                        onCopy={handleCopyLeft}
-                        onToggleView={handleRightToggleView}
-                        direction="left"
-                        viewType={rightView}
-                    />
-
-                    {rightView === "text" ? (
-                        <EnhancedTextArea
-                            value={rightJson}
-                            onChange={setRightJson}
-                            height={500}
-                        />
-                    ) : (
-                        <div className="border border-gray-200 rounded-md h-[500px] overflow-auto p-3">
-                            <TreeView
-                                jsonText={rightJson}
-                                searchTerm={searchTerm}
-                                onSearchResults={handleSearchResults}
-                            />
-                        </div>
-                    )}
+                    <div className="action-buttons">
+                        <button onClick={formatJSON} disabled={!isValid}>
+                            🛠️ Format
+                        </button>
+                        <button onClick={compactJSON} disabled={!isValid}>
+                            📦 Compact
+                        </button>
+                        <button onClick={pasteJSON}>
+                            📋 Paste
+                        </button>
+                        <button onClick={copyJSON} disabled={!jsonText}>
+                            📄 Copy
+                        </button>
+                        <button onClick={clearEditor}>
+                            🗑️ Clear
+                        </button>
+                        <button onClick={toggleTheme}>
+                            {editorTheme === 'vs' ? '🌙 Dark' : '☀️ Light'}
+                        </button>
+                    </div>
                 </div>
             </div>
 
-            {/* URL Loader Modal */}
-            <UrlLoaderModal
-                isOpen={isUrlModalOpen}
-                onClose={handleCloseUrlModal}
-                onLoad={handleUrlLoad}
-                isLoading={isLoadingUrl}
-                error={urlError}
-            />
+            <div className="editor-container">
+                {/* Split View - USING EXACT SAME STRUCTURE AS XML/YAML */}
+                {viewMode === 'split' && (
+                    <div
+                        ref={containerRef}
+                        className="split-container"
+                    >
+                        <div
+                            className="panel left-panel"
+                            style={{ width: `${splitPosition}%` }}
+                        >
+                            <div className="panel-header">
+                                <h4>💻 Code Editor</h4>
+                            </div>
+                            <div className="panel-content">
+                                <Editor
+                                    height="100%"
+                                    defaultLanguage="json"
+                                    value={jsonText}
+                                    onChange={handleEditorChange}
+                                    onMount={handleEditorDidMount}
+                                    theme={editorTheme}
+                                    options={{
+                                        minimap: { enabled: false },
+                                        fontSize: 14,
+                                        lineNumbers: 'on',
+                                        scrollBeyondLastLine: false,
+                                        automaticLayout: true,
+                                        tabSize: 2,
+                                        insertSpaces: true,
+                                        formatOnPaste: true,
+                                        formatOnType: true,
+                                    }}
+                                />
+                            </div>
+                        </div>
 
-            {/* NEW: Conversion Modal */}
-            <ConversionModal
-                isOpen={isConversionModalOpen}
-                onClose={() => setIsConversionModalOpen(false)}
-                currentFormat="json" // This should be "json" for JSON editor
-                currentData={leftJson}
-                onConverted={handleConvertedData}
-            />
+                        <div
+                            className="resize-handle"
+                            onMouseDown={handleResizeStart}
+                        >
+                            <div className="handle-bar"></div>
+                        </div>
 
-            {/* Notification */}
-            {notification && (
-                <Notification
-                    message={notification.message}
-                    type={notification.type}
-                    onClose={() => setNotification(null)}
-                />
-            )}
+                        <div
+                            className="panel right-panel"
+                            style={{ width: `${100 - splitPosition}%` }}
+                        >
+                            <div className="panel-header">
+                                <h4>🌳 Tree View</h4>
+                                <span className="tree-stats">
+                                    {treeData.length > 0 ? `${treeData.filter(n => n.depth === 0).length} root properties` : 'No data'}
+                                </span>
+                            </div>
+                            <div className="panel-content">
+                                {!isValid ? (
+                                    <div className="tree-error">
+                                        ❌ Cannot display tree view for invalid JSON
+                                    </div>
+                                ) : !jsonText.trim() ? (
+                                    <div className="tree-empty">
+                                        📝 Enter JSON to see tree view
+                                    </div>
+                                ) : treeData.length === 0 ? (
+                                    <div className="tree-empty">
+                                        🔄 Building tree view...
+                                    </div>
+                                ) : (
+                                    <div className="tree-nodes">
+                                        {renderTreeNodes(treeData.filter(node => node.depth === 0))}
+                                    </div>
+                                )}
+                            </div>
+                        </div>
+                    </div>
+                )}
 
-            {/* Add SEO landing at the bottom */}
-            <SEOLanding />
+                {/* Other view modes */}
+                {viewMode === 'code' && (
+                    <div className="full-editor">
+                        <Editor
+                            height="100%"
+                            defaultLanguage="json"
+                            value={jsonText}
+                            onChange={handleEditorChange}
+                            onMount={handleEditorDidMount}
+                            theme={editorTheme}
+                            options={{
+                                minimap: { enabled: true },
+                                fontSize: 14,
+                                lineNumbers: 'on',
+                                scrollBeyondLastLine: false,
+                                automaticLayout: true,
+                                tabSize: 2,
+                                insertSpaces: true,
+                                formatOnPaste: true,
+                                formatOnType: true,
+                            }}
+                        />
+                    </div>
+                )}
+
+                {viewMode === 'tree' && (
+                    <div className="full-tree">
+                        <div className="tree-header">
+                            <h3>🌳 JSON Tree View</h3>
+                            <span className="tree-stats">
+                                {treeData.length > 0 ? `${treeData.filter(n => n.depth === 0).length} root properties` : 'No data'}
+                            </span>
+                        </div>
+                        <div className="tree-content">
+                            {!isValid ? (
+                                <div className="tree-error">
+                                    ❌ Cannot display tree view for invalid JSON
+                                </div>
+                            ) : !jsonText.trim() ? (
+                                <div className="tree-empty">
+                                    📝 Enter JSON to see tree view
+                                </div>
+                            ) : treeData.length === 0 ? (
+                                <div className="tree-empty">
+                                    🔄 Building tree view...
+                                </div>
+                            ) : (
+                                <div className="tree-nodes">
+                                    {renderTreeNodes(treeData.filter(node => node.depth === 0))}
+                                </div>
+                            )}
+                        </div>
+                    </div>
+                )}
+
+                {errors.length > 0 && (
+                    <div className="error-panel">
+                        <div className="error-header">
+                            <span className="error-count">{errors.length} error(s) found</span>
+                        </div>
+                        <div className="error-list">
+                            {errors.map((error, index) => (
+                                <div
+                                    key={index}
+                                    className="error-item"
+                                    onClick={() => handleErrorClick(error)}
+                                >
+                                    <span className="error-message">{error.message}</span>
+                                    <span className="error-location">Line {error.line}</span>
+                                </div>
+                            ))}
+                        </div>
+                    </div>
+                )}
+
+                {isValid && jsonText.trim() && (
+                    <div className="validation-status valid">
+                        ✅ Valid JSON
+                    </div>
+                )}
+            </div>
+
+            <div className="editor-stats">
+                <div className="stat-item">
+                    <span className="stat-label">Lines:</span>
+                    <span className="stat-value">{jsonText.split('\n').length}</span>
+                </div>
+                <div className="stat-item">
+                    <span className="stat-label">Characters:</span>
+                    <span className="stat-value">{jsonText.length}</span>
+                </div>
+                <div className="stat-item">
+                    <span className="stat-label">Status:</span>
+                    <span className={`stat-value ${isValid ? 'valid' : 'invalid'}`}>
+                        {isValid ? 'Valid' : 'Invalid'}
+                    </span>
+                </div>
+            </div>
         </div>
     );
 };

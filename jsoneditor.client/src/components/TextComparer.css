@@ -2,54 +2,76 @@
 .text-comparer {
     display: flex;
     flex-direction: column;
-    height: 80vh;
+    height: 100vh;
     font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
     background-color: #f5f5f5;
-    border-radius: 8px;
-    overflow: hidden;
 }
 
 .comparer-header {
     display: flex;
     justify-content: space-between;
     align-items: center;
-    padding: 1rem 2rem;
+    padding: 1rem 1.5rem;
     background-color: white;
     border-bottom: 1px solid #ddd;
     box-shadow: 0 2px 4px rgba(0,0,0,0.1);
     flex-shrink: 0;
+    gap: 1rem;
 }
 
     .comparer-header h2 {
         margin: 0;
         color: #333;
+        font-size: 1.5rem;
+        font-weight: 600;
+        white-space: nowrap;
     }
 
 .toolbar {
     display: flex;
-    gap: 1rem;
+    align-items: center;
+    gap: 0.5rem;
+    flex-wrap: wrap;
+    overflow-x: auto;
 }
 
-    .toolbar button {
-        padding: 0.5rem 1rem;
-        border: 1px solid #ddd;
-        background: white;
-        border-radius: 4px;
-        cursor: pointer;
-        transition: all 0.2s;
-        font-size: 0.9rem;
-    }
+.language-select {
+    padding: 0.5rem;
+    border: 1px solid #ddd;
+    border-radius: 4px;
+    background: white;
+    font-size: 0.9rem;
+    cursor: pointer;
+    min-width: 120px;
+}
 
-        .toolbar button:hover:not(:disabled) {
-            background: #f0f0f0;
-            border-color: #999;
-        }
+.toolbar button {
+    padding: 0.5rem 1rem;
+    border: 1px solid #ddd;
+    background: white;
+    border-radius: 4px;
+    cursor: pointer;
+    transition: all 0.2s;
+    font-size: 0.9rem;
+    display: flex;
+    align-items: center;
+    gap: 0.25rem;
+    white-space: nowrap;
+    flex-shrink: 0;
+}
+
+    .toolbar button:hover {
+        background: #f0f0f0;
+        border-color: #999;
+    }
 
 .comparer-container {
     display: flex;
     flex: 1;
     overflow: hidden;
     background: white;
+    align-items: stretch;
+    min-height: 0;
 }
 
 .text-panel {
@@ -62,6 +84,7 @@
     border-radius: 8px;
     overflow: hidden;
     box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+    min-height: 0;
 }
 
 .left-panel {
@@ -94,132 +117,23 @@
     font-weight: 500;
 }
 
-.text-container {
-    display: flex;
+.editor-container {
     flex: 1;
     overflow: hidden;
+    min-height: 0;
+    position: relative;
 }
 
-/* Left Panel: Line numbers on left, text on right */
-.left-panel .text-container {
-    flex-direction: row;
-}
-
-.left-panel .line-numbers {
-    background: #f8f9fa;
-    padding: 0.5rem;
-    border-right: 1px solid #e9ecef;
-    text-align: right;
-    font-family: 'Monaco', 'Menlo', 'Ubuntu Mono', monospace;
-    font-size: 0.875rem;
-    color: #6c757d;
-    min-width: 3rem;
-    user-select: none;
-    overflow-y: auto;
-}
-
-.left-panel .text-content {
-    flex: 1;
-    padding: 0.5rem;
-    font-family: 'Monaco', 'Menlo', 'Ubuntu Mono', monospace;
-    font-size: 0.875rem;
-    line-height: 1.5;
-    background: white;
-    overflow: auto;
-}
-
-/* Right Panel: Text on left, line numbers on right */
-.right-panel .text-container {
-    flex-direction: row;
-}
-
-.right-panel .line-numbers {
-    background: #f8f9fa;
-    padding: 0.5rem;
-    border-left: 1px solid #e9ecef;
-    text-align: right;
-    font-family: 'Monaco', 'Menlo', 'Ubuntu Mono', monospace;
-    font-size: 0.875rem;
-    color: #6c757d;
-    min-width: 3rem;
-    user-select: none;
-    overflow-y: auto;
-    order: 2;
-}
-
-.right-panel .text-content {
-    flex: 1;
-    padding: 0.5rem;
-    font-family: 'Monaco', 'Menlo', 'Ubuntu Mono', monospace;
-    font-size: 0.875rem;
-    line-height: 1.5;
-    background: white;
-    overflow: auto;
-    order: 1;
-}
-
-/* Common line number styles */
-.line-number {
-    padding: 0 4px;
-    height: 1.5rem;
-    line-height: 1.5rem;
-    transition: background-color 0.2s;
-    white-space: nowrap;
-}
-
-    .line-number.different {
-        background: #fff5f5;
-        color: #dc3545;
-        font-weight: bold;
+    /* Monaco Editor styling */
+    .editor-container .monaco-editor {
+        border-radius: 0 0 8px 8px;
     }
 
-/* Common text line styles */
-.text-line {
-    padding: 0 4px;
-    height: 1.5rem;
-    line-height: 1.5rem;
-    white-space: pre;
-    word-break: break-all;
-    border-left: 3px solid transparent;
-    transition: background-color 0.2s;
-    display: flex;
-    align-items: center;
-    font-family: inherit;
-}
-
-    .text-line.line-different {
-        background: #fff5f5;
-        border-left-color: #dc3545;
-    }
-
-.text-same {
-    color: #333;
-}
-
-.text-diff {
-    font-weight: bold;
-    border-radius: 2px;
-    padding: 1px 2px;
-    line-height: 1.4;
-}
-
-.left-diff {
-    background: #ffcccc;
-    color: #dc3545;
-    text-decoration: underline;
-}
-
-.right-diff {
-    background: #ccffcc;
-    color: #28a745;
-    text-decoration: underline;
-}
-
-/* Comparison Panel - Only buttons */
+/* Comparison Panel */
 .comparison-panel {
     display: flex;
     flex-direction: column;
-    flex: 0.4;
+    flex: 0.25;
     background: white;
     border: 1px solid #ddd;
     margin: 1rem 0;
@@ -227,51 +141,71 @@
     overflow: hidden;
     box-shadow: 0 2px 8px rgba(0,0,0,0.1);
     min-width: 120px;
+    min-height: 0;
 }
 
 .diff-actions-panel {
     flex: 1;
-    overflow-y: auto;
-    padding: 0.5rem;
+    overflow: hidden;
     background: #fafafa;
+    position: relative;
+    min-height: 0;
+}
+
+.actions-container {
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    height: auto;
 }
 
 .action-line {
     display: flex;
     align-items: center;
-    justify-content: center;
-    padding: 0;
-    margin: 0;
-    height: 1.5rem;
-    transition: background-color 0.2s;
-    border-left: 3px solid transparent;
+    justify-content: space-between;
+    width: 100%;
+    height: 21px;
+    min-height: 21px;
+    padding: 0 0.75rem;
+    border-bottom: 1px solid #f1f1f1;
+    transition: all 0.2s ease;
+    background: #fafafa;
 }
 
     .action-line.different {
         background: #fff5f5;
-        border-left-color: #dc3545;
+        border-bottom-color: #feb2b2;
+    }
+
+    .action-line:hover {
+        background: #e9ecef;
+    }
+
+    .action-line.different:hover {
+        background: #ffe6e6;
     }
 
 .action-buttons {
     display: flex;
-    gap: 0.5rem;
+    gap: 0.4rem;
     align-items: center;
-    height: 100%;
+    flex-shrink: 0;
 }
 
 .action-btn {
-    width: 28px;
-    height: 28px;
+    width: 24px;
+    height: 18px;
     border: none;
-    border-radius: 6px;
+    border-radius: 3px;
     cursor: pointer;
-    font-size: 0.9rem;
+    font-size: 0.7rem;
     font-weight: bold;
     display: flex;
     align-items: center;
     justify-content: center;
-    transition: all 0.2s;
-    box-shadow: 0 2px 4px rgba(0,0,0,0.2);
+    transition: all 0.2s ease;
+    box-shadow: 0 1px 2px rgba(0,0,0,0.1);
 }
 
     .action-btn.left-to-right {
@@ -281,7 +215,7 @@
 
         .action-btn.left-to-right:hover {
             background: #218838;
-            transform: scale(1.1);
+            box-shadow: 0 2px 4px rgba(40, 167, 69, 0.3);
         }
 
     .action-btn.right-to-left {
@@ -291,8 +225,130 @@
 
         .action-btn.right-to-left:hover {
             background: #0056b3;
-            transform: scale(1.1);
+            box-shadow: 0 2px 4px rgba(0, 123, 255, 0.3);
         }
+
+.line-number {
+    font-size: 0.75rem;
+    color: #6c757d;
+    font-family: 'Monaco', 'Menlo', 'Ubuntu Mono', monospace;
+    font-weight: 600;
+    min-width: 1.5rem;
+    text-align: center;
+}
+
+/* Word Diff Preview */
+.word-diff-preview {
+    background: white;
+    border: 1px solid #e9ecef;
+    margin: 0 1rem 1rem 1rem;
+    border-radius: 8px;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+    overflow: hidden;
+}
+
+.preview-header {
+    padding: 0.75rem 1rem;
+    background: #f8f9fa;
+    border-bottom: 1px solid #e9ecef;
+}
+
+    .preview-header h4 {
+        margin: 0;
+        color: #495057;
+        font-size: 0.9rem;
+        font-weight: 600;
+    }
+
+.preview-content {
+    padding: 1rem;
+    max-height: 200px;
+    overflow-y: auto;
+}
+
+.word-diff-line {
+    margin-bottom: 1rem;
+    padding: 0.5rem;
+    background: #fafafa;
+    border-radius: 4px;
+    border: 1px solid #e9ecef;
+}
+
+    .word-diff-line:last-child {
+        margin-bottom: 0;
+    }
+
+.diff-line-number {
+    font-size: 0.8rem;
+    color: #6c757d;
+    font-weight: 600;
+    margin-bottom: 0.5rem;
+    font-family: 'Monaco', 'Menlo', 'Ubuntu Mono', monospace;
+}
+
+.word-diffs {
+    display: flex;
+    flex-direction: column;
+    gap: 0.25rem;
+}
+
+.left-diff, .right-diff {
+    font-family: 'Monaco', 'Menlo', 'Ubuntu Mono', monospace;
+    font-size: 0.8rem;
+    line-height: 1.4;
+}
+
+    .left-diff strong, .right-diff strong {
+        color: #495057;
+        margin-right: 0.5rem;
+    }
+
+/* Word highlighting */
+.diff-word {
+    padding: 0.1rem 0.2rem;
+    border-radius: 2px;
+    margin: 0 0.1rem;
+    transition: all 0.2s ease;
+}
+
+    .diff-word.same {
+        color: #333;
+    }
+
+    .diff-word.removed {
+        background: #fee2e2;
+        color: #dc2626;
+        text-decoration: line-through;
+        font-weight: 600;
+    }
+
+    .diff-word.added {
+        background: #dcfce7;
+        color: #16a34a;
+        font-weight: 600;
+    }
+
+/* Ensure proper line alignment */
+.comparer-container .text-panel,
+.comparer-container .comparison-panel {
+    display: flex;
+    flex-direction: column;
+}
+
+.comparer-container .editor-container,
+.comparer-container .diff-actions-panel {
+    flex: 1;
+    position: relative;
+}
+
+/* Monaco editor line height matching */
+.editor-container .view-line {
+    line-height: 21px !important;
+}
+
+.editor-container .view-lines {
+    line-height: 21px !important;
+}
 
 .comparer-summary {
     display: flex;
@@ -318,7 +374,7 @@
     }
 
     .summary-item .value {
-        font-size: 1.25rem;
+        font-size: 1.125rem;
         font-weight: bold;
         color: #495057;
     }
@@ -331,40 +387,33 @@
             color: #28a745;
         }
 
+        .summary-item .value.language-name {
+            font-size: 1rem;
+            color: #007bff;
+        }
+
 /* Scrollbar styling */
-.text-content::-webkit-scrollbar,
 .diff-actions-panel::-webkit-scrollbar,
-.line-numbers::-webkit-scrollbar {
-    width: 8px;
+.preview-content::-webkit-scrollbar {
+    width: 6px;
 }
 
-.text-content::-webkit-scrollbar-track,
 .diff-actions-panel::-webkit-scrollbar-track,
-.line-numbers::-webkit-scrollbar-track {
+.preview-content::-webkit-scrollbar-track {
     background: #f1f1f1;
-    border-radius: 4px;
+    border-radius: 3px;
 }
 
-.text-content::-webkit-scrollbar-thumb,
 .diff-actions-panel::-webkit-scrollbar-thumb,
-.line-numbers::-webkit-scrollbar-thumb {
+.preview-content::-webkit-scrollbar-thumb {
     background: #c1c1c1;
-    border-radius: 4px;
+    border-radius: 3px;
 }
 
-    .text-content::-webkit-scrollbar-thumb:hover,
     .diff-actions-panel::-webkit-scrollbar-thumb:hover,
-    .line-numbers::-webkit-scrollbar-thumb:hover {
+    .preview-content::-webkit-scrollbar-thumb:hover {
         background: #a8a8a8;
     }
-
-/* Ensure all content areas align perfectly */
-.text-content,
-.diff-actions-panel,
-.line-numbers {
-    line-height: 1.5rem;
-    font-size: 0.875rem;
-}
 
 /* Responsive design */
 @media (max-width: 1024px) {
@@ -376,6 +425,8 @@
         min-width: auto;
         margin: 0.5rem 1rem;
         order: 3;
+        height: auto;
+        max-height: 200px;
     }
 
     .text-panel {
@@ -388,6 +439,18 @@
 
     .right-panel {
         margin-left: 1rem;
+    }
+
+    .action-line {
+        height: 32px;
+        min-height: 32px;
+        padding: 0.5rem 0.75rem;
+    }
+
+    .action-btn {
+        width: 28px;
+        height: 24px;
+        font-size: 0.8rem;
     }
 }
 
@@ -413,14 +476,7 @@
         justify-content: space-between;
     }
 
-    .action-buttons {
+    .word-diffs {
         flex-direction: column;
-        gap: 0.25rem;
-    }
-
-    .action-btn {
-        width: 24px;
-        height: 24px;
-        font-size: 0.8rem;
     }
 }
