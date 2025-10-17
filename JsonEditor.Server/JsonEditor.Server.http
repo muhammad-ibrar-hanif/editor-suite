@@ -1,0 +1,6 @@
+@JsonEditor.Server_HostAddress = http://localhost:5143
+
+GET {{JsonEditor.Server_HostAddress}}/weatherforecast/
+Accept: application/json
+
+###

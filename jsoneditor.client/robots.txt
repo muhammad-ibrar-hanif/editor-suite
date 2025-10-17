@@ -1,0 +1,6 @@
+# public/robots.txt
+User-agent: *
+Allow: /
+Disallow: /api/
+
+Sitemap: https://yourdomain.com/sitemap.xml

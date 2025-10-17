@@ -1,0 +1,8 @@
+﻿################################################################################
+# This .gitignore file was automatically created by Microsoft(R) Visual Studio.
+################################################################################
+
+/jsoneditor.client/sitemap.xml
+/jsoneditor.client/obj/Debug
+/JsonEditor.Server/bin/Debug/net9.0
+/JsonEditor.Server/obj
