@@ -1,6 +1,7 @@
 ﻿// src/components/TextComparer.tsx
 import React, { useState, useEffect, useRef } from 'react';
 import Editor from '@monaco-editor/react';
+import { diffWords } from 'diff';
 import './TextComparer.css';
 
 interface DiffLine {
@@ -9,13 +10,6 @@ interface DiffLine {
     leftLineNumber: number;
     rightLineNumber: number;
     hasDifference: boolean;
-    wordDiffs?: WordDiff[];
-}
-
-interface WordDiff {
-    value: string;
-    added?: boolean;
-    removed?: boolean;
 }
 
 const TextComparer = () => {
@@ -24,10 +18,12 @@ const TextComparer = () => {
     const [diffLines, setDiffLines] = useState<DiffLine[]>([]);
     const [language, setLanguage] = useState<string>('plaintext');
     const [editorTheme, setEditorTheme] = useState<'vs' | 'vs-dark'>('vs');
+    const [showHelp, setShowHelp] = useState<boolean>(true);
 
     const leftEditorRef = useRef<any>(null);
     const rightEditorRef = useRef<any>(null);
     const actionsPanelRef = useRef<HTMLDivElement>(null);
+    const monacoRef = useRef<any>(null);
 
     // Language options for different code types
     const languageOptions = [
@@ -48,84 +44,105 @@ const TextComparer = () => {
         { value: 'markdown', label: '📖 Markdown' }
     ];
 
-    // Simple word-level diff algorithm
-    const computeWordDiffs = (left: string, right: string): { leftDiffs: WordDiff[], rightDiffs: WordDiff[] } => {
-        if (left === right) {
-            return {
-                leftDiffs: [{ value: left }],
-                rightDiffs: [{ value: right }]
-            };
+    // Clear all decorations
+    const clearHighlights = () => {
+        if (leftEditorRef.current) {
+            leftEditorRef.current.deltaDecorations([], []);
         }
+        if (rightEditorRef.current) {
+            rightEditorRef.current.deltaDecorations([], []);
+        }
+    };
 
-        const leftWords = left.split(/(\s+)/).filter(word => word.length > 0);
-        const rightWords = right.split(/(\s+)/).filter(word => word.length > 0);
+    // Apply Monaco decorations using proper diff algorithm
+    const applyWordHighlights = () => {
+        if (!monacoRef.current || !leftEditorRef.current || !rightEditorRef.current) return;
 
-        const leftDiffs: WordDiff[] = [];
-        const rightDiffs: WordDiff[] = [];
+        clearHighlights(); // Clear previous highlights first
 
-        let i = 0, j = 0;
+        const leftDecorations: any[] = [];
+        const rightDecorations: any[] = [];
 
-        while (i < leftWords.length || j < rightWords.length) {
-            if (i < leftWords.length && j < rightWords.length && leftWords[i] === rightWords[j]) {
-                // Words match
-                leftDiffs.push({ value: leftWords[i] });
-                rightDiffs.push({ value: rightWords[j] });
-                i++;
-                j++;
-            } else {
-                // Words don't match - find the best match
-                let foundMatch = false;
+        diffLines.forEach((line, lineIndex) => {
+            const lineNum = lineIndex + 1;
 
-                // Look ahead in right for current left word
-                for (let k = j + 1; k < rightWords.length; k++) {
-                    if (leftWords[i] === rightWords[k]) {
-                        // Add removed words from left and added words from right
-                        for (let l = j; l < k; l++) {
-                            rightDiffs.push({ value: rightWords[l], added: true });
+            // Only highlight if there's a real difference
+            if (line.hasDifference && line.leftText !== line.rightText) {
+                try {
+                    // Use the diff library to find word-level differences
+                    const differences = diffWords(line.leftText, line.rightText);
+
+                    let leftOffset = 0;
+                    let rightOffset = 0;
+
+                    differences.forEach(diff => {
+                        if (diff.removed) {
+                            // Highlight removed text in left editor
+                            const startColumn = leftOffset + 1;
+                            const endColumn = startColumn + diff.value.length;
+
+                            leftDecorations.push({
+                                range: new monacoRef.current.Range(lineNum, startColumn, lineNum, endColumn),
+                                options: {
+                                    isWholeLine: false,
+                                    className: 'word-diff-removed',
+                                    inlineClassName: 'word-diff-removed-inline'
+                                }
+                            });
+                            leftOffset += diff.value.length;
+                        } else if (diff.added) {
+                            // Highlight added text in right editor
+                            const startColumn = rightOffset + 1;
+                            const endColumn = startColumn + diff.value.length;
+
+                            rightDecorations.push({
+                                range: new monacoRef.current.Range(lineNum, startColumn, lineNum, endColumn),
+                                options: {
+                                    isWholeLine: false,
+                                    className: 'word-diff-added',
+                                    inlineClassName: 'word-diff-added-inline'
+                                }
+                            });
+                            rightOffset += diff.value.length;
+                        } else {
+                            // Unchanged text - just advance offsets
+                            leftOffset += diff.value.length;
+                            rightOffset += diff.value.length;
                         }
-                        leftDiffs.push({ value: leftWords[i], removed: true });
-                        j = k + 1;
-                        i++;
-                        foundMatch = true;
-                        break;
-                    }
-                }
-
-                // Look ahead in left for current right word
-                if (!foundMatch) {
-                    for (let k = i + 1; k < leftWords.length; k++) {
-                        if (leftWords[k] === rightWords[j]) {
-                            // Add removed words from left and added words from right
-                            for (let l = i; l < k; l++) {
-                                leftDiffs.push({ value: leftWords[l], removed: true });
+                    });
+                } catch (error) {
+                    console.error('Error computing diff for line:', lineIndex, error);
+                    // Fallback: highlight entire line if diff fails
+                    if (line.leftText.trim()) {
+                        leftDecorations.push({
+                            range: new monacoRef.current.Range(lineNum, 1, lineNum, line.leftText.length + 1),
+                            options: {
+                                isWholeLine: false,
+                                className: 'word-diff-removed',
+                                inlineClassName: 'word-diff-removed-inline'
                             }
-                            rightDiffs.push({ value: rightWords[j], added: true });
-                            i = k + 1;
-                            j++;
-                            foundMatch = true;
-                            break;
-                        }
+                        });
                     }
-                }
-
-                // If no match found, mark both as different
-                if (!foundMatch) {
-                    if (i < leftWords.length) {
-                        leftDiffs.push({ value: leftWords[i], removed: true });
-                        i++;
-                    }
-                    if (j < rightWords.length) {
-                        rightDiffs.push({ value: rightWords[j], added: true });
-                        j++;
+                    if (line.rightText.trim()) {
+                        rightDecorations.push({
+                            range: new monacoRef.current.Range(lineNum, 1, lineNum, line.rightText.length + 1),
+                            options: {
+                                isWholeLine: false,
+                                className: 'word-diff-added',
+                                inlineClassName: 'word-diff-added-inline'
+                            }
+                        });
                     }
                 }
             }
-        }
+        });
 
-        return { leftDiffs, rightDiffs };
+        // Apply decorations to Monaco editors
+        leftEditorRef.current.deltaDecorations([], leftDecorations);
+        rightEditorRef.current.deltaDecorations([], rightDecorations);
     };
 
-    // Perform line-by-line comparison with word-level diffs
+    // Perform line-by-line comparison
     useEffect(() => {
         const leftLines = leftText.split('\n');
         const rightLines = rightText.split('\n');
@@ -136,13 +153,8 @@ const TextComparer = () => {
         for (let i = 0; i < maxLines; i++) {
             const leftLine = leftLines[i] || '';
             const rightLine = rightLines[i] || '';
+
             const hasDifference = leftLine !== rightLine;
-
-            let wordDiffs: { leftDiffs: WordDiff[], rightDiffs: WordDiff[] } | undefined;
-
-            if (hasDifference) {
-                wordDiffs = computeWordDiffs(leftLine, rightLine);
-            }
 
             newDiffLines.push({
                 leftText: leftLine,
@@ -150,12 +162,18 @@ const TextComparer = () => {
                 leftLineNumber: i + 1,
                 rightLineNumber: i + 1,
                 hasDifference,
-                wordDiffs: wordDiffs ? { leftDiffs: wordDiffs.leftDiffs, rightDiffs: wordDiffs.rightDiffs } : undefined
             });
         }
 
         setDiffLines(newDiffLines);
     }, [leftText, rightText]);
+
+    // Apply highlights when diffLines change
+    useEffect(() => {
+        if (leftEditorRef.current && rightEditorRef.current) {
+            applyWordHighlights();
+        }
+    }, [diffLines]);
 
     // Auto-detect language based on content
     useEffect(() => {
@@ -189,12 +207,21 @@ const TextComparer = () => {
     };
 
     // Monaco Editor callbacks
-    const handleLeftEditorDidMount = (editor: any) => {
-        leftEditorRef.current = editor;
+    const handleEditorDidMount = (editor: any, isLeft: boolean) => {
+        if (isLeft) {
+            leftEditorRef.current = editor;
+        } else {
+            rightEditorRef.current = editor;
+        }
+
+        // Apply highlights after editor is mounted
+        setTimeout(() => {
+            applyWordHighlights();
+        }, 100);
     };
 
-    const handleRightEditorDidMount = (editor: any) => {
-        rightEditorRef.current = editor;
+    const handleMonacoMount = (monaco: any) => {
+        monacoRef.current = monaco;
     };
 
     // Copy line from left to right
@@ -265,22 +292,14 @@ const TextComparer = () => {
         }
     };
 
-    // Copy from left editor
-    const copyFromLeft = async () => {
-        try {
-            await navigator.clipboard.writeText(leftText);
-        } catch (error) {
-            console.error('Failed to copy to clipboard:', error);
-        }
+    // Copy from left to right
+    const copyFromLeftToRight = () => {
+        setRightText(leftText);
     };
 
-    // Copy from right editor
-    const copyFromRight = async () => {
-        try {
-            await navigator.clipboard.writeText(rightText);
-        } catch (error) {
-            console.error('Failed to copy to clipboard:', error);
-        }
+    // Copy from right to left
+    const copyFromRightToLeft = () => {
+        setLeftText(rightText);
     };
 
     // Load sample code
@@ -311,6 +330,16 @@ const TextComparer = () => {
   const tax = subtotal * 0.15;
   return subtotal + tax;
 }`
+            },
+            python: {
+                left: `def calculate_total(price, quantity):
+    subtotal = price * quantity
+    tax = subtotal * 0.1
+    return subtotal + tax`,
+                right: `def calculate_total(price, quantity):
+    subtotal = price * quantity
+    tax = subtotal * 0.15
+    return subtotal + tax`
             }
         };
 
@@ -323,34 +352,201 @@ const TextComparer = () => {
         setRightText(sample.right);
     };
 
-    // Format code
+    // Format code based on language
     const formatCode = () => {
-        alert(`Formatting for ${language} would be implemented here with proper formatters`);
+        try {
+            switch (language) {
+                case 'json':
+                    formatJSON();
+                    break;
+                case 'javascript':
+                case 'typescript':
+                    formatJavaScript();
+                    break;
+                case 'html':
+                    formatHTML();
+                    break;
+                case 'css':
+                    formatCSS();
+                    break;
+                case 'xml':
+                    formatXML();
+                    break;
+                case 'python':
+                    formatPython();
+                    break;
+                case 'sql':
+                    formatSQL();
+                    break;
+                case 'yaml':
+                    formatYAML();
+                    break;
+                default:
+                    // For plaintext and other languages, just trim and normalize whitespace
+                    formatPlainText();
+                    break;
+            }
+        } catch (error) {
+            console.error('Formatting error:', error);
+            alert(`Failed to format ${language} code. The content might be invalid.`);
+        }
     };
 
-    // Render word differences with highlighting
-    const renderWordDiffs = (diffs: WordDiff[], isLeft: boolean) => {
-        return diffs.map((diff, index) => {
-            if (diff.removed) {
-                return (
-                    <span key={index} className="diff-word removed">
-                        {diff.value}
-                    </span>
-                );
-            } else if (diff.added) {
-                return (
-                    <span key={index} className="diff-word added">
-                        {diff.value}
-                    </span>
-                );
-            } else {
-                return (
-                    <span key={index} className="diff-word same">
-                        {diff.value}
-                    </span>
-                );
+    // Format JSON
+    const formatJSON = () => {
+        try {
+            const formattedLeft = JSON.stringify(JSON.parse(leftText), null, 2);
+            const formattedRight = JSON.stringify(JSON.parse(rightText), null, 2);
+            setLeftText(formattedLeft);
+            setRightText(formattedRight);
+        } catch (error) {
+            alert('Invalid JSON format. Please check your JSON syntax.');
+        }
+    };
+
+    // Format JavaScript/TypeScript (basic indentation)
+    const formatJavaScript = () => {
+        const formattedLeft = formatCodeWithIndentation(leftText);
+        const formattedRight = formatCodeWithIndentation(rightText);
+        setLeftText(formattedLeft);
+        setRightText(formattedRight);
+    };
+
+    // Format HTML (basic indentation)
+    const formatHTML = () => {
+        const formattedLeft = formatHTMLWithIndentation(leftText);
+        const formattedRight = formatHTMLWithIndentation(rightText);
+        setLeftText(formattedLeft);
+        setRightText(formattedRight);
+    };
+
+    // Format CSS (basic indentation)
+    const formatCSS = () => {
+        const formattedLeft = formatCSSWithIndentation(leftText);
+        const formattedRight = formatCSSWithIndentation(rightText);
+        setLeftText(formattedLeft);
+        setRightText(formattedRight);
+    };
+
+    // Format XML (basic indentation)
+    const formatXML = () => {
+        const formattedLeft = formatXMLWithIndentation(leftText);
+        const formattedRight = formatXMLWithIndentation(rightText);
+        setLeftText(formattedLeft);
+        setRightText(formattedRight);
+    };
+
+    // Format Python (basic indentation preservation)
+    const formatPython = () => {
+        // Python relies on indentation, so we just ensure consistent spacing
+        const formattedLeft = leftText.replace(/\t/g, '    ').replace(/[ ]{2,}/g, '    ');
+        const formattedRight = rightText.replace(/\t/g, '    ').replace(/[ ]{2,}/g, '    ');
+        setLeftText(formattedLeft);
+        setRightText(formattedRight);
+    };
+
+    // Format SQL (basic formatting)
+    const formatSQL = () => {
+        const formattedLeft = formatSQLWithIndentation(leftText);
+        const formattedRight = formatSQLWithIndentation(rightText);
+        setLeftText(formattedLeft);
+        setRightText(formattedRight);
+    };
+
+    // Format YAML (basic indentation)
+    const formatYAML = () => {
+        const formattedLeft = formatYAMLWithIndentation(leftText);
+        const formattedRight = formatYAMLWithIndentation(rightText);
+        setLeftText(formattedLeft);
+        setRightText(formattedRight);
+    };
+
+    // Format plain text (trim and normalize)
+    const formatPlainText = () => {
+        const formattedLeft = leftText.split('\n').map(line => line.trimEnd()).join('\n');
+        const formattedRight = rightText.split('\n').map(line => line.trimEnd()).join('\n');
+        setLeftText(formattedLeft);
+        setRightText(formattedRight);
+    };
+
+    // Helper function for basic code indentation
+    const formatCodeWithIndentation = (code: string): string => {
+        return code.split('\n').map(line => {
+            // Remove trailing whitespace
+            let formatted = line.trimEnd();
+            // Basic indentation preservation
+            return formatted;
+        }).join('\n');
+    };
+
+    // Basic HTML formatting
+    const formatHTMLWithIndentation = (html: string): string => {
+        let indentLevel = 0;
+        const lines = html.split('\n');
+        const formatted = lines.map(line => {
+            const trimmed = line.trim();
+            if (trimmed.startsWith('</')) {
+                indentLevel = Math.max(0, indentLevel - 1);
             }
+            const indented = '  '.repeat(indentLevel) + trimmed;
+            if (trimmed.startsWith('<') && !trimmed.startsWith('</') && !trimmed.endsWith('/>') && !trimmed.includes('</')) {
+                indentLevel++;
+            }
+            return indented;
+        }).join('\n');
+        return formatted;
+    };
+
+    // Basic CSS formatting
+    const formatCSSWithIndentation = (css: string): string => {
+        let indentLevel = 0;
+        const lines = css.split('\n');
+        const formatted = lines.map(line => {
+            const trimmed = line.trim();
+            if (trimmed.endsWith('}')) {
+                indentLevel = Math.max(0, indentLevel - 1);
+            }
+            const indented = '  '.repeat(indentLevel) + trimmed;
+            if (trimmed.endsWith('{')) {
+                indentLevel++;
+            }
+            return indented;
+        }).join('\n');
+        return formatted;
+    };
+
+    // Basic XML formatting
+    const formatXMLWithIndentation = (xml: string): string => {
+        return formatHTMLWithIndentation(xml); // Similar to HTML
+    };
+
+    // Basic SQL formatting
+    const formatSQLWithIndentation = (sql: string): string => {
+        const keywords = ['SELECT', 'FROM', 'WHERE', 'INSERT', 'UPDATE', 'DELETE', 'JOIN', 'LEFT', 'RIGHT', 'INNER', 'OUTER', 'GROUP BY', 'ORDER BY', 'HAVING'];
+        let lines = sql.split('\n');
+        lines = lines.map(line => {
+            let formatted = line.trim();
+            keywords.forEach(keyword => {
+                const regex = new RegExp(`\\b${keyword}\\b`, 'gi');
+                formatted = formatted.replace(regex, keyword);
+            });
+            return formatted;
         });
+        return lines.join('\n');
+    };
+
+    // Basic YAML formatting
+    const formatYAMLWithIndentation = (yaml: string): string => {
+        const lines = yaml.split('\n');
+        const formatted = lines.map(line => {
+            // Preserve YAML indentation but ensure consistent 2-space indentation
+            const match = line.match(/^(\s*)/);
+            const indent = match ? match[1] : '';
+            const spaces = indent.replace(/\t/g, '    ').length;
+            const content = line.trim();
+            return '  '.repeat(Math.floor(spaces / 2)) + content;
+        }).join('\n');
+        return formatted;
     };
 
     return (
@@ -374,18 +570,43 @@ const TextComparer = () => {
                     <button onClick={formatCode}>🛠️ Format</button>
                     <button onClick={pasteToLeft}>📋 Paste Left</button>
                     <button onClick={pasteToRight}>📋 Paste Right</button>
-                    <button onClick={copyFromLeft}>📄 Copy Left</button>
-                    <button onClick={copyFromRight}>📄 Copy Right</button>
+                    <button onClick={copyFromLeftToRight}>📄 Copy Left → Right</button>
+                    <button onClick={copyFromRightToLeft}>📄 Copy Right → Left</button>
                     <button onClick={swapContent}>🔄 Swap</button>
                     <button onClick={clearBoth}>🗑️ Clear</button>
                     <button onClick={() => setEditorTheme(editorTheme === 'vs' ? 'vs-dark' : 'vs')}>
                         {editorTheme === 'vs' ? '🌙 Dark' : '☀️ Light'}
                     </button>
+                    <button
+                        onClick={() => setShowHelp(!showHelp)}
+                        className={`help-btn ${showHelp ? 'active' : ''}`}
+                    >
+                        {showHelp ? '❌ Hide Help' : '❓ Show Help'}
+                    </button>
                 </div>
             </div>
 
+            {/* Help Banner */}
+            {showHelp && (
+                <div className="help-banner">
+                    <div className="help-content">
+                        <div className="help-item">
+                            <span className="color-sample removed-sample"></span>
+                            <span>Text A (Left): Shows <strong>removed words</strong> with red background and strikethrough</span>
+                        </div>
+                        <div className="help-item">
+                            <span className="color-sample added-sample"></span>
+                            <span>Text B (Right): Shows <strong>added words</strong> with green background</span>
+                        </div>
+                        <div className="help-tip">
+                            💡 <strong>Tip:</strong> Use the Format button to beautify code for better comparison.
+                        </div>
+                    </div>
+                </div>
+            )}
+
             <div className="comparer-container">
-                {/* Left Panel */}
+                {/* Text A Panel - With Word Highlighting */}
                 <div className="text-panel left-panel">
                     <div className="panel-header">
                         <h3>Text A</h3>
@@ -397,7 +618,8 @@ const TextComparer = () => {
                             language={language}
                             value={leftText}
                             onChange={(value) => setLeftText(value || '')}
-                            onMount={handleLeftEditorDidMount}
+                            onMount={(editor) => handleEditorDidMount(editor, true)}
+                            beforeMount={handleMonacoMount}
                             theme={editorTheme}
                             options={{
                                 minimap: { enabled: false },
@@ -414,10 +636,10 @@ const TextComparer = () => {
                     </div>
                 </div>
 
-                {/* Comparison Panel */}
+                {/* Line Actions Panel - Reduced Width */}
                 <div className="comparison-panel">
                     <div className="panel-header">
-                        <h3>Line Actions</h3>
+                        <h3>Actions</h3>
                         <span className="diff-count">
                             {diffLines.filter(line => line.hasDifference).length} diff
                         </span>
@@ -432,6 +654,9 @@ const TextComparer = () => {
                                     key={index}
                                     className={`action-line ${line.hasDifference ? 'different' : ''}`}
                                 >
+                                    <div className="line-number">
+                                        {index + 1}
+                                    </div>
                                     {line.hasDifference && (
                                         <div className="action-buttons">
                                             <button
@@ -450,16 +675,13 @@ const TextComparer = () => {
                                             </button>
                                         </div>
                                     )}
-                                    <div className="line-number">
-                                        {index + 1}
-                                    </div>
                                 </div>
                             ))}
                         </div>
                     </div>
                 </div>
 
-                {/* Right Panel */}
+                {/* Text B Panel - With Word Highlighting */}
                 <div className="text-panel right-panel">
                     <div className="panel-header">
                         <h3>Text B</h3>
@@ -471,7 +693,8 @@ const TextComparer = () => {
                             language={language}
                             value={rightText}
                             onChange={(value) => setRightText(value || '')}
-                            onMount={handleRightEditorDidMount}
+                            onMount={(editor) => handleEditorDidMount(editor, false)}
+                            beforeMount={handleMonacoMount}
                             theme={editorTheme}
                             options={{
                                 minimap: { enabled: false },
@@ -488,34 +711,6 @@ const TextComparer = () => {
                     </div>
                 </div>
             </div>
-
-            {/* Word Diff Preview */}
-            {diffLines.some(line => line.hasDifference && line.wordDiffs) && (
-                <div className="word-diff-preview">
-                    <div className="preview-header">
-                        <h4>🔍 Word-level Differences</h4>
-                    </div>
-                    <div className="preview-content">
-                        {diffLines
-                            .filter(line => line.hasDifference && line.wordDiffs)
-                            .map((line, index) => (
-                                <div key={index} className="word-diff-line">
-                                    <div className="diff-line-number">Line {line.leftLineNumber}:</div>
-                                    <div className="word-diffs">
-                                        <div className="left-diff">
-                                            <strong>Left:</strong>
-                                            {line.wordDiffs && renderWordDiffs(line.wordDiffs.leftDiffs, true)}
-                                        </div>
-                                        <div className="right-diff">
-                                            <strong>Right:</strong>
-                                            {line.wordDiffs && renderWordDiffs(line.wordDiffs.rightDiffs, false)}
-                                        </div>
-                                    </div>
-                                </div>
-                            ))}
-                    </div>
-                </div>
-            )}
 
             {/* Summary */}
             <div className="comparer-summary">
